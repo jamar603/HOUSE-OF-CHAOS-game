@@ -1,11 +1,14 @@
 {
   "name": "house-of-chaos",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "HOUSE OF CHAOS - jeu de survie multijoueur 2D vue de dessus (navigateur).",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev.mjs",
+    "dev:client": "vite --host",
+    "server": "tsx watch server/index.ts",
+    "start": "tsx server/index.ts",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
@@ -13,8 +16,17 @@
     "check": "tsc --noEmit && vitest run"
   },
   "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/ws": "^8.5.13",
     "typescript": "5.6.3",
     "vite": "5.4.11",
     "vitest": "2.1.8"
+  },
+  "dependencies": {
+    "tsx": "^4.19.2",
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

@@ -1,25 +1,41 @@
 /**
- * Client application: menus, the offline match loop (simulation + bots),
- * rendering, HUD, sounds. The simulation runs at a fixed 60 Hz; rendering
- * interpolates positions between ticks for smooth motion on any monitor.
+ * Client application.
+ *
+ * Offline mode: the browser runs the simulation itself with 3 bots (fixed 60 Hz).
+ * Online mode: the server runs the simulation; the browser sends its inputs
+ * ~30 times per second and draws the snapshots it receives (~20 per second),
+ * interpolating positions between them. Both modes share the same rendering,
+ * HUD, sounds and event handling.
  */
 import { BotController } from '../shared/bots/BotController';
 import { NavigationGrid } from '../shared/bots/pathfinding';
 import { CHARACTERS, getCharacter, PREPARATION_PRESETS, SIMULATION_TICK_RATE } from '../shared/constants';
 import { ITEM_DEFINITIONS } from '../shared/items/itemDefinitions';
 import { distance, lerp } from '../shared/math';
+import {
+  INPUT_SEND_RATE,
+  SNAPSHOT_RATE,
+  type LobbyState,
+  type ServerMessage,
+} from '../shared/network/protocol';
+import { applySnapshot } from '../shared/network/snapshot';
 import { GameSimulation, type PlayerSetup } from '../shared/simulation/GameSimulation';
-import type { GameEvent, PlayerInput, PlayerState } from '../shared/types';
+import { createEmptyInput, type GameEvent, type PlayerInput, type PlayerState } from '../shared/types';
 import { SoundEffects, type SoundName } from './audio/SoundEffects';
 import { InputController } from './input/InputController';
+import { NetworkClient, type ConnectionStatus } from './network/NetworkClient';
 import { Renderer } from './render/Renderer';
 import { Hud } from './ui/Hud';
 import { Screens, type MatchSettings } from './ui/Screens';
 
 const FIXED_DT = 1 / SIMULATION_TICK_RATE;
+const SNAPSHOT_INTERVAL_MS = 1000 / SNAPSHOT_RATE;
+const INPUT_INTERVAL_MS = 1000 / INPUT_SEND_RATE;
 const STORAGE_KEY = 'house-of-chaos.settings.v1';
+const SERVER_HELP = 'Serveur de jeu injoignable. Lancez-le avec « npm run dev » (ou « npm start » après un build).';
 
-type AppState = 'menu' | 'playing' | 'paused' | 'eliminated' | 'spectating' | 'over';
+type AppState = 'menu' | 'connecting' | 'lobby' | 'playing' | 'paused' | 'eliminated' | 'spectating' | 'over';
+type Mode = 'offline' | 'online';
 
 function loadSettings(): MatchSettings {
   const defaults: MatchSettings = {
@@ -59,6 +75,7 @@ export class App {
   private readonly input: InputController;
   private settings: MatchSettings;
   private state: AppState = 'menu';
+  private mode: Mode = 'offline';
   private sim: GameSimulation | null = null;
   private renderer: Renderer | null = null;
   private bots: BotController[] = [];
@@ -71,6 +88,14 @@ export class App {
   private previousPositions = new Map<number, { x: number; y: number }>();
   private lastCombatBlockedNotice = -10;
   private announcedCountdown = new Set<number>();
+  private inviteCode: string | undefined;
+
+  // Online.
+  private readonly network = new NetworkClient();
+  private lobby: LobbyState | null = null;
+  private snapshotReceivedAt = 0;
+  private lastInputSentAt = 0;
+  private pendingResume = false;
 
   constructor(canvas: HTMLCanvasElement, hudRoot: HTMLElement, screenRoot: HTMLElement) {
     this.canvas = canvas;
@@ -84,43 +109,230 @@ export class App {
         if (this.sim) this.hud.notify(muted ? 'Son coupé (M)' : 'Son activé (M)');
       },
     });
+    this.network.onMessage = (message) => this.onServerMessage(message);
+    this.network.onStatus = (status) => this.onConnectionStatus(status);
     window.addEventListener('resize', () => this.renderer?.resize());
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden && this.state === 'playing') this.togglePause();
+      if (document.hidden && this.mode === 'offline' && this.state === 'playing') this.togglePause();
     });
     canvas.addEventListener('mousedown', () => this.sounds.unlock());
   }
 
   start(): void {
     const params = new URLSearchParams(window.location.search);
+    this.inviteCode = params.get('room')?.toUpperCase() ?? undefined;
     if (params.has('autostart')) {
       const prep = Number(params.get('prep'));
-      this.startMatch({ ...this.settings, preparationSeconds: Number.isFinite(prep) && params.has('prep') ? prep : this.settings.preparationSeconds });
+      this.startOfflineMatch({
+        ...this.settings,
+        preparationSeconds: params.has('prep') && Number.isFinite(prep) ? prep : this.settings.preparationSeconds,
+      });
     } else {
       this.showMainMenu();
+      this.tryResumeSession();
     }
     requestAnimationFrame(this.frame);
   }
 
-  // ---------------------------------------------------------------- flow
+  // ---------------------------------------------------------------- menus
 
-  private showMainMenu(): void {
+  private showMainMenu(error?: string): void {
     this.state = 'menu';
+    this.mode = 'offline';
     this.input.enabled = false;
     this.hud.hide();
     this.sim = null;
     this.renderer = null;
     const context = this.canvas.getContext('2d');
     context?.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    this.screens.showMainMenu(this.settings, (settings) => {
+    const remember = (settings: MatchSettings): void => {
       this.settings = settings;
       saveSettings(settings);
       this.sounds.unlock();
-      this.startMatch(settings);
+    };
+    this.screens.showMainMenu(
+      this.settings,
+      {
+        onPlayOffline: (settings) => {
+          remember(settings);
+          this.startOfflineMatch(settings);
+        },
+        onCreateRoom: (settings) => {
+          remember(settings);
+          this.goOnline('Création du salon…', () =>
+            this.network.send({ type: 'createRoom', name: settings.playerName, characterId: settings.characterId }),
+          );
+        },
+        onJoinRoom: (settings, code) => {
+          remember(settings);
+          this.inviteCode = code;
+          this.goOnline(`Connexion au salon ${code}…`, () =>
+            this.network.send({ type: 'joinRoom', code, name: settings.playerName, characterId: settings.characterId }),
+          );
+        },
+      },
+      { inviteCode: this.inviteCode, error },
+    );
+  }
+
+  // ---------------------------------------------------------------- online flow
+
+  /** After a page refresh, silently try to get back into the previous room. */
+  private tryResumeSession(): void {
+    try {
+      if (!window.sessionStorage.getItem('house-of-chaos.session')) return;
+    } catch {
+      return;
+    }
+    this.pendingResume = true;
+    this.network.connect().catch(() => {
+      this.pendingResume = false;
     });
   }
 
-  private startMatch(settings: MatchSettings): void {
+  private goOnline(text: string, action: () => void): void {
+    this.state = 'connecting';
+    this.mode = 'online';
+    this.screens.showConnecting(text, () => this.leaveOnline());
+    this.network
+      .connect()
+      .then(() => {
+        if (this.state === 'connecting') action();
+      })
+      .catch(() => {
+        if (this.mode === 'online') this.showMainMenu(SERVER_HELP);
+      });
+  }
+
+  private leaveOnline(): void {
+    if (this.lobby) this.network.send({ type: 'leaveRoom' });
+    this.lobby = null;
+    window.setTimeout(() => this.network.close(), 100);
+    this.network.forgetSession();
+    this.showMainMenu();
+  }
+
+  private showLobbyScreen(): void {
+    if (!this.lobby) return;
+    this.state = 'lobby';
+    this.mode = 'online';
+    this.input.enabled = false;
+    this.hud.hide();
+    this.sim = null;
+    this.renderer = null;
+    this.screens.showLobby(this.lobby, {
+      onReady: (ready) => this.network.send({ type: 'setReady', ready }),
+      onCharacter: (characterId) => {
+        this.settings = { ...this.settings, characterId };
+        saveSettings(this.settings);
+        this.network.send({ type: 'setCharacter', characterId });
+      },
+      onSettings: (settings) => this.network.send({ type: 'setSettings', settings }),
+      onStart: () => this.network.send({ type: 'startMatch' }),
+      onLeave: () => this.leaveOnline(),
+      onCopy: (text) => {
+        navigator.clipboard
+          ?.writeText(text)
+          .then(() => this.screens.toast('Copié !', 'good'))
+          .catch(() => this.screens.toast(text, 'info'));
+      },
+      inviteLink: (code) => `${window.location.origin}${window.location.pathname}?room=${code}`,
+    });
+  }
+
+  private onConnectionStatus(status: ConnectionStatus): void {
+    if (this.mode !== 'online') return;
+    if (status === 'reconnecting') {
+      if (this.sim) this.hud.notify('Connexion perdue · reconnexion…', 'danger');
+      else this.screens.toast('Connexion perdue · reconnexion…', 'danger');
+    } else if (status === 'closed' && this.state !== 'menu') {
+      this.lobby = null;
+      this.showMainMenu(SERVER_HELP);
+    }
+  }
+
+  private onServerMessage(message: ServerMessage): void {
+    switch (message.type) {
+      case 'welcome':
+        if (this.pendingResume) {
+          this.pendingResume = false;
+          if (message.resumed) this.mode = 'online';
+          else this.network.close();
+        }
+        return;
+      case 'lobby': {
+        const wasInLobby = this.lobby !== null;
+        this.lobby = message.lobby;
+        this.inviteCode = message.lobby.code;
+        if (this.state === 'menu' || this.state === 'connecting' || this.state === 'lobby') {
+          if (!wasInLobby && this.state === 'menu') this.mode = 'online';
+          if (this.mode === 'online') this.showLobbyScreen();
+        }
+        return;
+      }
+      case 'leftRoom':
+        this.lobby = null;
+        this.network.close();
+        this.network.forgetSession();
+        if (this.mode === 'online') this.showMainMenu(message.reason);
+        return;
+      case 'matchStart':
+        this.startOnlineMatch(message.localPlayerId, message.players, message.preparationSeconds);
+        return;
+      case 'snapshot':
+        this.applyServerSnapshot(message.snapshot, message.events);
+        return;
+      case 'notice':
+        if (this.sim && this.mode === 'online') this.hud.notify(message.text, message.tone);
+        else this.screens.toast(message.text, message.tone);
+        return;
+      case 'error':
+        if (this.state === 'connecting') {
+          this.lobby = null;
+          this.network.close();
+          this.showMainMenu(message.message);
+        } else if (this.sim) {
+          this.hud.notify(message.message, 'danger');
+        } else {
+          this.screens.toast(message.message, 'danger');
+        }
+        return;
+      case 'pong':
+        return;
+    }
+  }
+
+  private startOnlineMatch(localPlayerId: number, players: PlayerSetup[], preparationSeconds: number): void {
+    this.mode = 'online';
+    this.screens.hide();
+    this.localPlayerId = localPlayerId;
+    // Mirror simulation: never stepped here, only overwritten by server snapshots.
+    this.sim = new GameSimulation(players, { preparationSeconds, seed: 1 });
+    this.bots = [];
+    this.renderer = new Renderer(this.canvas, this.sim);
+    this.beginMatchPresentation(this.sim, preparationSeconds);
+  }
+
+  private applyServerSnapshot(snapshot: Parameters<typeof applySnapshot>[1], events: GameEvent[]): void {
+    const sim = this.sim;
+    const renderer = this.renderer;
+    if (this.mode !== 'online' || !sim || !renderer) return;
+    for (const player of sim.players) this.previousPositions.set(player.id, { x: player.x, y: player.y });
+    applySnapshot(sim, snapshot);
+    this.snapshotReceivedAt = performance.now();
+    for (const event of events) this.handleEvent(sim, renderer, event);
+    this.announceCountdown(sim);
+  }
+
+  private sendNeutralInput(): void {
+    if (this.mode !== 'online' || !this.sim) return;
+    this.network.send({ type: 'input', input: createEmptyInput(this.sim.players[this.localPlayerId].facing) });
+  }
+
+  // ---------------------------------------------------------------- offline flow
+
+  private startOfflineMatch(settings: MatchSettings): void {
+    this.mode = 'offline';
     this.screens.hide();
     const seed = Math.floor(Math.random() * 1_000_000);
     // The human gets a random bedroom; bots take the other characters.
@@ -138,24 +350,35 @@ export class App {
     this.sim = new GameSimulation(setups, { preparationSeconds: settings.preparationSeconds, seed });
     this.grid ??= new NavigationGrid(this.sim.map);
     const grid = this.grid;
-    this.bots = this.sim.players.filter((player) => player.isBot).map((player) => new BotController(player.id, grid, seed + player.id * 7919));
+    this.bots = this.sim.players
+      .filter((player) => player.isBot)
+      .map((player) => new BotController(player.id, grid, seed + player.id * 7919));
     this.renderer = new Renderer(this.canvas, this.sim);
+    this.beginMatchPresentation(this.sim, settings.preparationSeconds);
+  }
+
+  private beginMatchPresentation(sim: GameSimulation, preparationSeconds: number): void {
     this.spectateTargetId = this.localPlayerId;
     this.accumulator = 0;
-    this.previousPositions = new Map(this.sim.players.map((player) => [player.id, { x: player.x, y: player.y }]));
+    this.snapshotReceivedAt = performance.now();
+    this.previousPositions = new Map(sim.players.map((player) => [player.id, { x: player.x, y: player.y }]));
     this.announcedCountdown.clear();
     this.input.reset();
     this.input.enabled = true;
     this.state = 'playing';
-    this.hud.show(this.sim);
-    const preparation = settings.preparationSeconds;
-    if (preparation > 0) {
-      const duration = preparation >= 60 ? `${Math.round(preparation / 60)} min` : `${Math.round(preparation)} s`;
+    this.hud.show(sim);
+    if (preparationSeconds > 0) {
+      const duration = preparationSeconds >= 60 ? `${Math.round(preparationSeconds / 60)} min` : `${Math.round(preparationSeconds)} s`;
       this.hud.showBanner('PRÉPARATION', `${duration} pour vous armer et barricader votre chambre`, 'info');
     } else {
       this.hud.showBanner('LE CHAOS COMMENCE !', 'Le dernier debout gagne', 'chaos');
     }
-    this.hud.notify(`Votre chambre : ${this.sim.map.rooms.find((room) => room.ownerSlot === this.localPlayerId)?.name ?? ''}`, 'info');
+    const room = sim.map.rooms.find((candidate) => candidate.ownerSlot === this.localPlayerId);
+    this.hud.notify(`Votre chambre : ${room?.name ?? ''}`, 'info');
+  }
+
+  private restartOffline(): void {
+    this.startOfflineMatch(this.settings);
   }
 
   private togglePause(): void {
@@ -164,10 +387,13 @@ export class App {
       const resumeState = this.state;
       this.state = 'paused';
       this.input.enabled = false;
+      this.sendNeutralInput();
+      const online = this.mode === 'online';
       this.screens.showPause({
+        online,
         onResume: () => this.resume(resumeState),
-        onRestart: () => this.startMatch(this.settings),
-        onMenu: () => this.showMainMenu(),
+        onRestart: online ? null : () => this.restartOffline(),
+        onMenu: () => (online ? this.leaveOnline() : this.showMainMenu()),
         onToggleMute: () => this.sounds.toggleMute(),
       });
     } else if (this.state === 'paused') {
@@ -195,18 +421,30 @@ export class App {
     if (sim && renderer) {
       const zoomSteps = this.input.consumeZoomSteps();
       if (zoomSteps !== 0) renderer.adjustZoom(zoomSteps);
-      const simulating = this.state === 'playing' || this.state === 'eliminated' || this.state === 'spectating';
-      if (simulating) {
-        this.accumulator += dt;
-        let steps = 0;
-        while (this.accumulator >= FIXED_DT && steps < 6) {
-          this.stepSimulation(sim, renderer);
-          this.accumulator -= FIXED_DT;
-          steps++;
+      let alpha = 1;
+      if (this.mode === 'offline') {
+        const simulating = this.state === 'playing' || this.state === 'eliminated' || this.state === 'spectating';
+        if (simulating) {
+          this.accumulator += dt;
+          let steps = 0;
+          while (this.accumulator >= FIXED_DT && steps < 6) {
+            this.stepOffline(sim, renderer);
+            this.accumulator -= FIXED_DT;
+            steps++;
+          }
+          if (steps === 6) this.accumulator = 0;
+          alpha = this.accumulator / FIXED_DT;
         }
-        if (steps === 6) this.accumulator = 0;
+      } else {
+        const now = performance.now();
+        if (this.state === 'playing' && now - this.lastInputSentAt >= INPUT_INTERVAL_MS) {
+          this.lastInputSentAt = now;
+          const local = sim.players[this.localPlayerId];
+          const screen = renderer.worldToScreen(local.x, local.y);
+          this.network.send({ type: 'input', input: this.input.sample(screen.x, screen.y) });
+        }
+        alpha = Math.min(1, (now - this.snapshotReceivedAt) / SNAPSHOT_INTERVAL_MS);
       }
-      const alpha = simulating ? this.accumulator / FIXED_DT : 1;
       const positions = new Map<number, { x: number; y: number }>();
       for (const player of sim.players) {
         const previous = this.previousPositions.get(player.id) ?? player;
@@ -221,9 +459,16 @@ export class App {
         positions,
       });
       this.hud.update(sim, this.localPlayerId, this.time);
+      this.hud.setNetworkInfo(this.mode === 'online' ? this.networkLabel() : null);
     }
     requestAnimationFrame(this.frame);
   };
+
+  private networkLabel(): string {
+    const ping = this.network.pingMs;
+    const code = this.lobby?.code ?? '';
+    return `En ligne · salon ${code}${ping !== null ? ` · ${ping} ms` : ''}`;
+  }
 
   private cameraTargetId(sim: GameSimulation): number {
     const local = sim.players[this.localPlayerId];
@@ -235,7 +480,7 @@ export class App {
     return this.spectateTargetId;
   }
 
-  private stepSimulation(sim: GameSimulation, renderer: Renderer): void {
+  private stepOffline(sim: GameSimulation, renderer: Renderer): void {
     for (const player of sim.players) this.previousPositions.set(player.id, { x: player.x, y: player.y });
     const inputs = new Map<number, PlayerInput>();
     const local = sim.players[this.localPlayerId];
@@ -322,19 +567,7 @@ export class App {
         const killer = event.killerId !== null ? sim.players[event.killerId] : null;
         this.soundAt('eliminated', player.x, player.y, sim);
         this.hud.notify(`${player.name} est éliminé${killer ? ` par ${name(killer)}` : ''}`, 'danger');
-        if (event.playerId === localId && sim.phase !== 'finished') {
-          this.state = 'eliminated';
-          this.input.enabled = false;
-          this.input.reset();
-          this.screens.showEliminated(killer?.name ?? null, {
-            onSpectate: () => {
-              this.screens.hide();
-              this.state = 'spectating';
-            },
-            onRestart: () => this.startMatch(this.settings),
-            onMenu: () => this.showMainMenu(),
-          });
-        }
+        if (event.playerId === localId && sim.phase !== 'finished') this.onLocalEliminated(killer);
         return;
       }
       case 'phaseChanged':
@@ -350,6 +583,23 @@ export class App {
         this.finishMatch(sim, event.winnerId);
         return;
     }
+  }
+
+  private onLocalEliminated(killer: PlayerState | null): void {
+    this.state = 'eliminated';
+    this.input.enabled = false;
+    this.input.reset();
+    this.sendNeutralInput();
+    const online = this.mode === 'online';
+    this.screens.showEliminated(killer?.name ?? null, {
+      onSpectate: () => {
+        this.screens.hide();
+        this.state = 'spectating';
+      },
+      onRestart: online ? null : () => this.restartOffline(),
+      onMenu: () => (online ? this.leaveOnline() : this.showMainMenu()),
+      menuLabel: online ? 'Quitter le salon' : 'Menu principal',
+    });
   }
 
   private announceCountdown(sim: GameSimulation): void {
@@ -374,6 +624,7 @@ export class App {
     const winner = winnerId !== null ? sim.players[winnerId] : null;
     if (winner) this.spectateTargetId = winner.id;
     this.hud.showBanner(victory ? 'VICTOIRE !' : 'FIN DE PARTIE', winner ? `${winner.name} est le dernier debout` : '', victory ? 'good' : 'danger');
+    const online = this.mode === 'online';
     window.setTimeout(() => {
       if (this.sim !== sim) return;
       this.screens.showGameOver(
@@ -384,13 +635,25 @@ export class App {
           durationSeconds: result?.durationSeconds ?? sim.elapsedSeconds,
           ranking: (result?.ranking ?? sim.players.map((player) => player.id)).map((id) => sim.players[id]),
         },
-        { onRestart: () => this.startMatch(this.settings), onMenu: () => this.showMainMenu() },
+        online
+          ? {
+              restartLabel: 'Retour au salon',
+              menuLabel: 'Quitter',
+              onRestart: () => this.showLobbyScreen(),
+              onMenu: () => this.leaveOnline(),
+            }
+          : {
+              restartLabel: 'Rejouer',
+              menuLabel: 'Menu principal',
+              onRestart: () => this.restartOffline(),
+              onMenu: () => this.showMainMenu(),
+            },
       );
     }, 1800);
   }
 
-  /** Debug access from the browser console: `houseOfChaos.sim`. */
-  get debug(): { sim: GameSimulation | null; state: AppState; character: ReturnType<typeof getCharacter> } {
-    return { sim: this.sim, state: this.state, character: getCharacter(this.settings.characterId) };
+  /** Debug access from the browser console: `houseOfChaos.debug`. */
+  get debug(): { sim: GameSimulation | null; state: AppState; mode: Mode; lobby: LobbyState | null; character: ReturnType<typeof getCharacter> } {
+    return { sim: this.sim, state: this.state, mode: this.mode, lobby: this.lobby, character: getCharacter(this.settings.characterId) };
   }
 }

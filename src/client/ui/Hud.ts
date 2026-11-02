@@ -48,6 +48,7 @@ export class Hud {
   private readonly downed: HTMLElement;
   private readonly downedTimer: HTMLElement;
   private readonly downedHint: HTMLElement;
+  private readonly networkInfo: HTMLElement;
   private minimapBase: HTMLCanvasElement | null = null;
   private lastItemKey = '';
   private lastPlayersKey = '';
@@ -72,7 +73,9 @@ export class Hud {
     this.healthText = el('span', 'health-text', healthBar);
     this.selfStatus = el('div', 'self-status', selfInfo);
 
-    this.playersBox = el('div', 'hud-players panel', this.root);
+    const rightColumn = el('div', 'hud-right', this.root);
+    this.playersBox = el('div', 'hud-players panel', rightColumn);
+    this.networkInfo = el('div', 'hud-network hidden', rightColumn);
 
     const item = el('div', 'hud-item panel', this.root);
     this.itemIcon = el('canvas', 'item-icon', item);
@@ -112,6 +115,12 @@ export class Hud {
 
   hide(): void {
     this.root.classList.add('hidden');
+  }
+
+  /** Online status line (room code, ping), or null to hide it. */
+  setNetworkInfo(text: string | null): void {
+    this.networkInfo.classList.toggle('hidden', text === null);
+    if (text !== null && this.networkInfo.textContent !== text) this.networkInfo.textContent = text;
   }
 
   notify(text: string, tone: NotificationTone = 'info'): void {

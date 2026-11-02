@@ -3,7 +3,7 @@
 Top-down 2D multiplayer survival game in the browser. Four roommates are locked in one big house.
 They prepare their bedroom, fight with household objects, then the last one standing wins.
 
-**Current version: 0.1** (offline mode, you plus 3 bots).
+**Current version: 0.3**: online multiplayer with up to 4 players (lobby, invite code, Ready button, reconnection), and offline mode against 3 bots.
 
 ## Running the game
 
@@ -11,19 +11,31 @@ You need Node.js 18 or later.
 
 ```bash
 npm install        # once
-npm run dev        # dev server at http://localhost:5173
+npm run dev        # game server (port 8080) + client (http://localhost:5173)
 ```
 
-Other commands:
+Open http://localhost:5173. Choose **Create a game**, then share the code or the link.
+
+### Playing with friends
+
+- **Same Wi-Fi / local network**: `npm run dev` exposes the client on the network. Friends open
+  `http://<your-local-ip>:5173`; the address is printed in the terminal (`Network: http://192.168.x.x:5173`).
+  Windows may ask you to allow Node.js through the firewall: accept it for private networks.
+- **Over the internet**: deploy the project to a Node host (Render, Railway, Fly.io…) with
+  `npm install && npm run build` as the build command and `npm start` as the start command.
+  A single process serves the game and the WebSocket on the `PORT` port.
 
 | Command | Purpose |
 | --- | --- |
-| `npm run build` | Type-check, then build the production bundle into `dist/` |
-| `npm run preview` | Serve the build at http://localhost:4173 |
-| `npm test` | Simulation tests (map, collisions, combat, revive, full bot matches) |
+| `npm run dev` | Game server (auto-restarts) + Vite client |
+| `npm run server` | Game server only (port 8080) |
+| `npm run build` | Type-check + production client build into `dist/` |
+| `npm start` | Production: serves `dist/` + the WebSocket on `PORT` (default 8080) |
+| `npm test` | Tests: map, collisions, combat, revive, bot matches, network server |
 | `npm run typecheck` | TypeScript check only |
 
-Debug URLs: `?autostart=1` skips the menu. `?autostart=1&prep=0` starts directly in the chaos phase.
+Debug URLs: `?autostart=1` (offline game without the menu), `?autostart=1&prep=0` (straight to chaos),
+`?room=CODE` (pre-fills the invite code).
 
 ## Controls
 
@@ -59,8 +71,10 @@ Debug URLs: `?autostart=1` skips the menu. `?autostart=1&prep=0` starts directly
 ## Architecture
 
 ```
+server/                    Node.js server (ws): gameServer.ts, RoomManager.ts, Room.ts
 src/
-  shared/                  No DOM dependency: runs in the browser AND later on a Node server
+  shared/                  No DOM dependency: runs in the browser AND on the server
+    network/               Protocol (validated messages) and compact snapshots
     constants.ts           Gameplay constants, characters
     types.ts               State, inputs, events
     math.ts                Geometry, seeded random
@@ -73,6 +87,7 @@ src/
     render/                Canvas 2D: house, characters, items, effects, camera
     ui/                    HUD and screens (DOM)
     input/                 Keyboard and mouse (a touch controller can come later)
+    network/               WebSocket client with automatic reconnection
     audio/                 Synthesized sounds (Web Audio)
 tests/                     Vitest
 ```
@@ -82,7 +97,11 @@ Design principles:
 - **Authoritative simulation.** Players, including bots, only send a `PlayerInput`
   (movement, aim, attack, interact, drop). Movement, collisions, damage, items,
   downed players, revives, eliminations and the clock are all computed by `GameSimulation`.
-  Inputs are sanitized there. This is the code that will run on the server in version 0.3.
+  Inputs are sanitized there. Online, this exact code runs on the server at 60 Hz:
+  clients send their inputs (30/s) and receive snapshots (20/s) that they interpolate.
+- **Network.** Every message is validated (`parseClientMessage`), and the server rate-limits
+  each client and caps message size. A disconnected player is replaced by a bot and takes
+  their character back on reconnection, since the session is kept in `sessionStorage`.
 - **Deterministic.** Seeded randomness and a fixed time step, so tests are reproducible.
 - **Procedural art.** No image assets yet. Everything is drawn in Canvas 2D, and the house
   is pre-rendered once per match.
@@ -90,6 +109,6 @@ Design principles:
 ## Roadmap
 
 - 0.2: multi-slot inventory, movable furniture, traps, door barricades
-- 0.3: Node.js WebSocket server (authoritative, reusing `src/shared`), lobby, invite code, 4 players, disconnections
+- ~~0.3: online multiplayer~~ ✅
 - 0.4: random events (power cut, fire, alarm, locked doors, basement opening, rare items, water leak), lighting, sounds
 - 1.0: progression, statistics, leaderboard, character customization, team mode
