@@ -377,7 +377,8 @@ export class Screens {
             <li><kbd>E</kbd><span>Ramasser · échanger un objet</span></li>
             <li><kbd>E</kbd> maintenu<span>Réanimer un joueur K.O. (5 s)</span></li>
             <li><kbd>G</kbd> / <kbd>Clic droit</kbd><span>Lâcher l'objet · poser la table en barricade</span></li>
-            <li><kbd>Molette</kbd><span>Zoom</span></li>
+            <li>Rester immobile près d'un grand meuble<span>Se cacher (armoire, canapé, frigo, plante…)</span></li>
+            <li><kbd>Molette</kbd> <kbd>+</kbd> <kbd>-</kbd><span>Zoom</span></li>
             <li><kbd>Échap</kbd><span>Pause / menu</span></li>
             <li><kbd>M</kbd><span>Couper le son</span></li>
           </ul>
@@ -386,6 +387,7 @@ export class Screens {
             <li><b>Préparation</b> : personne ne peut se blesser. Les chambres des autres sont fermées. Fouillez la maison et barricadez votre porte.</li>
             <li><b>Chaos</b> : tout est permis. Entrez chez les autres, cassez les barricades, frappez.</li>
             <li>À 0 PV vous êtes <b>K.O.</b> pendant 30 s. N'importe qui peut vous réanimer (5 s, retour à 35 PV). Les coups sur un joueur K.O. accélèrent son élimination.</li>
+            <li>Immobile contre un grand meuble, vous êtes <b>caché</b> : les adversaires ne vous voient plus, sauf s'ils s'approchent tout près. Bouger, frapper ou être touché vous révèle.</li>
             <li>Chaque objet s'use et finit par casser. Chaque chambre cache un <b>passage secret</b> (mur fissuré).</li>
             <li>Le dernier joueur debout gagne.</li>
           </ol>

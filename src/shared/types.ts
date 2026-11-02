@@ -61,6 +61,10 @@ export interface PlayerState {
   knockbackX: number;
   knockbackY: number;
   lastAttackerId: number | null;
+  /** Seconds spent standing still behind cover furniture. */
+  hideTime: number;
+  /** Hidden behind furniture: invisible to opponents further than HIDE_REVEAL_DISTANCE. */
+  hidden: boolean;
   eliminatedAtSeconds: number | null;
   previousInteract: boolean;
   previousDrop: boolean;

@@ -5,17 +5,19 @@
 import {
   BLEED_OUT_SECONDS,
   getCharacter,
+  HIDE_DELAY_SECONDS,
   MAX_HEALTH,
   PICKUP_RANGE,
   REVIVE_DURATION_SECONDS,
   REVIVE_RANGE,
   TILE_SIZE,
 } from '../../shared/constants';
-import { roomRectPixels } from '../../shared/house/houseMap';
+import { mapPixelSize, roomRectPixels } from '../../shared/house/houseMap';
 import { ITEM_DEFINITIONS } from '../../shared/items/itemDefinitions';
-import { clamp, distance, lerp } from '../../shared/math';
+import { clamp, distance } from '../../shared/math';
 import type { GameSimulation } from '../../shared/simulation/GameSimulation';
 import type { ItemState, PlayerState } from '../../shared/types';
+import { Camera } from './Camera';
 import { drawCharacter } from './characterArt';
 import { EffectsSystem } from './effects';
 import { createHouseLayer } from './houseArt';
@@ -80,20 +82,24 @@ export class Renderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private houseLayer: HTMLCanvasElement;
-  private cameraX = 0;
-  private cameraY = 0;
-  private cameraInitialized = false;
-  private zoomFactor = 1;
+  private readonly camera: Camera;
   private viewWidth = 1;
   private viewHeight = 1;
   private pixelRatio = 1;
   private vignette: CanvasGradient | null = null;
+  /**
+   * Swing start per player, timed on the client so the attack animation stays
+   * smooth even when the state arrives at 20 snapshots per second.
+   */
+  private readonly swings = new Map<number, { start: number; duration: number; lastRemaining: number }>();
 
   constructor(canvas: HTMLCanvasElement, sim: GameSimulation) {
     this.canvas = canvas;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 2D indisponible.');
     this.ctx = ctx;
+    const size = mapPixelSize(sim.map);
+    this.camera = new Camera({ width: size.x, height: size.y });
     this.houseLayer = createHouseLayer(sim.map, {
       ownerColors: [0, 1, 2, 3].map((slot) => {
         const player = sim.players[slot];
@@ -114,19 +120,22 @@ export class Renderer {
   }
 
   adjustZoom(steps: number): void {
-    this.zoomFactor = clamp(this.zoomFactor * Math.pow(1.12, -steps), 0.6, 1.7);
+    this.camera.adjustZoom(steps);
   }
 
   /** Base zoom adapts to the window so the visible area stays comparable on any screen. */
+  private get baseZoom(): number {
+    return clamp(Math.min(this.viewWidth / 880, this.viewHeight / 540), 0.85, 2.4);
+  }
+
   get zoom(): number {
-    const base = clamp(Math.min(this.viewWidth / 880, this.viewHeight / 540), 0.85, 2.4);
-    return base * this.zoomFactor;
+    return this.camera.zoom(this.baseZoom);
   }
 
   worldToScreen(x: number, y: number): { x: number; y: number } {
     return {
-      x: (x - this.cameraX) * this.zoom + this.viewWidth / 2,
-      y: (y - this.cameraY) * this.zoom + this.viewHeight / 2,
+      x: (x - this.camera.x) * this.zoom + this.viewWidth / 2,
+      y: (y - this.camera.y) * this.zoom + this.viewHeight / 2,
     };
   }
 
@@ -134,15 +143,12 @@ export class Renderer {
     const { sim, time, dt } = frame;
     const ctx = this.ctx;
     const target = frame.positions.get(frame.cameraTargetId) ?? sim.players[frame.cameraTargetId];
-    const follow = 1 - Math.exp(-10 * dt);
-    if (!this.cameraInitialized) {
-      this.cameraX = target.x;
-      this.cameraY = target.y;
-      this.cameraInitialized = true;
-    } else {
-      this.cameraX = lerp(this.cameraX, target.x, follow);
-      this.cameraY = lerp(this.cameraY, target.y, follow);
-    }
+    // Keep nearby opponents in frame so 4-player fights stay readable.
+    const viewer = sim.players[frame.localPlayerId];
+    const fighters = sim.players
+      .filter((player) => player.id !== frame.cameraTargetId && player.life !== 'eliminated' && sim.canSee(viewer, player))
+      .map((player) => frame.positions.get(player.id) ?? player);
+    this.camera.update(target, fighters, this.baseZoom, this.viewWidth, this.viewHeight, dt);
     const shake = this.effects.update(dt);
     const zoom = this.zoom;
 
@@ -153,7 +159,7 @@ export class Renderer {
     ctx.save();
     ctx.translate(this.viewWidth / 2 + shake.x, this.viewHeight / 2 + shake.y);
     ctx.scale(zoom, zoom);
-    ctx.translate(-this.cameraX, -this.cameraY);
+    ctx.translate(-this.camera.x, -this.camera.y);
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(this.houseLayer, 0, 0);
 
@@ -175,10 +181,12 @@ export class Renderer {
       const lifeOrder = (player: PlayerState): number => (player.life === 'eliminated' ? 0 : player.life === 'downed' ? 1 : 2);
       return lifeOrder(a) - lifeOrder(b) || a.y - b.y;
     });
-    for (const player of drawOrder) this.drawPlayer(frame, player);
+    // Players hidden behind furniture are not drawn for opponents who are not close.
+    const visible = drawOrder.filter((player) => sim.canSee(local, player));
+    for (const player of visible) this.drawPlayer(frame, player);
 
     this.effects.draw(ctx);
-    for (const player of sim.players) this.drawPlayerOverlay(frame, player);
+    for (const player of visible) this.drawPlayerOverlay(frame, player);
     if (hint) this.drawHint(hint);
     ctx.restore();
 
@@ -189,7 +197,7 @@ export class Renderer {
     const { sim, time } = frame;
     const position = frame.positions.get(player.id) ?? player;
     const held = sim.heldItemOf(player);
-    const swinging = player.swingRemaining > 0 && player.swingDuration > 0;
+    const swingProgress = this.swingProgress(player, time);
     const stats = sim.weaponStatsOf(player);
     const lastHit = this.effects.lastHitAt.get(player.id);
     drawCharacter(this.ctx, getCharacter(player.characterId), {
@@ -200,11 +208,13 @@ export class Renderer {
       isMoving: player.isMoving,
       life: player.life,
       heldItem: held?.kind ?? null,
-      swingProgress: swinging ? 1 - player.swingRemaining / player.swingDuration : -1,
+      swingProgress,
       swingArc: (stats.arcDegrees * Math.PI) / 180,
       hitFlash: lastHit === undefined ? 0 : clamp(1 - (time - lastHit) / 0.15, 0, 1),
       stunned: player.stunRemaining > 0,
       time,
+      // A hidden player sees themself faded; opponents close enough see them normally.
+      alpha: player.hidden && player.id === frame.localPlayerId ? 0.5 : 1,
     });
   }
 
@@ -214,6 +224,8 @@ export class Renderer {
     const character = getCharacter(player.characterId);
     const isLocal = player.id === frame.localPlayerId;
     if (player.life === 'eliminated') return;
+
+    if (isLocal && player.life === 'alive' && player.hideTime > 0) this.drawHideStatus(player, position);
 
     if (player.life === 'downed') {
       const bleedRatio = clamp(player.bleedOutRemaining / BLEED_OUT_SECONDS, 0, 1);
@@ -255,6 +267,57 @@ export class Renderer {
       ctx.fillStyle = ratio > 0.5 ? '#4cd97b' : ratio > 0.25 ? '#ffc94d' : '#ff4d4d';
       ctx.fillRect(position.x - width / 2, tagY, width * ratio, 3);
     }
+  }
+
+  private swingProgress(player: PlayerState, time: number): number {
+    let swing = this.swings.get(player.id);
+    const remaining = player.swingDuration > 0 ? player.swingRemaining : 0;
+    if (!swing) {
+      swing = { start: -Infinity, duration: 0, lastRemaining: 0 };
+      this.swings.set(player.id, swing);
+    }
+    // A new swing: the remaining time jumped up.
+    if (remaining > swing.lastRemaining + 0.01) {
+      const elapsed = player.swingDuration - remaining;
+      swing.start = time - elapsed;
+      swing.duration = player.swingDuration;
+    }
+    swing.lastRemaining = remaining;
+    if (swing.duration <= 0) return -1;
+    const progress = (time - swing.start) / swing.duration;
+    return progress >= 0 && progress < 1 ? progress : -1;
+  }
+
+  /** Ring that fills while the local player stays still behind furniture, then a "Caché" badge. */
+  private drawHideStatus(player: PlayerState, position: { x: number; y: number }): void {
+    const ctx = this.ctx;
+    if (!player.hidden) {
+      const ratio = clamp(player.hideTime / HIDE_DELAY_SECONDS, 0, 1);
+      ctx.beginPath();
+      ctx.arc(position.x, position.y, 19, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ratio);
+      ctx.strokeStyle = 'rgba(170,200,255,0.7)';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+      return;
+    }
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.arc(position.x, position.y, 19, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(170,200,255,0.55)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = '800 10px Nunito, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const label = '👁 CACHÉ';
+    const width = ctx.measureText(label).width + 12;
+    ctx.beginPath();
+    ctx.roundRect(position.x - width / 2, position.y + 24, width, 15, 7.5);
+    ctx.fillStyle = 'rgba(20,24,44,0.85)';
+    ctx.fill();
+    ctx.fillStyle = '#c8dcff';
+    ctx.fillText(label, position.x, position.y + 32);
   }
 
   private drawHint(hint: InteractionHint): void {

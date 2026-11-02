@@ -57,6 +57,8 @@ export function encodeSnapshot(sim: GameSimulation): EncodedSnapshot {
       p.stats.itemsBroken,
       p.stats.timesDowned,
       nullable(p.lastAttackerId),
+      p.hidden ? 1 : 0,
+      round2(p.hideTime),
     ]),
     items: sim.items.map((item) => [
       item.id,
@@ -110,6 +112,8 @@ export function applySnapshot(sim: GameSimulation, snapshot: EncodedSnapshot): v
     player.stats.itemsBroken = row[21];
     player.stats.timesDowned = row[22];
     player.lastAttackerId = fromNullable(row[23]);
+    player.hidden = row[24] === 1;
+    player.hideTime = row[25] ?? 0;
   });
   sim.items = snapshot.items.map(
     (row): ItemState => ({

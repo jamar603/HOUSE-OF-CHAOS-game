@@ -134,7 +134,8 @@ export class BotController {
   }
 
   private thinkChaos(sim: GameSimulation, self: PlayerState): void {
-    const enemies = sim.players.filter((player) => player.id !== self.id && player.life === 'alive');
+    // Bots only chase what they can see: hidden players stay safe until someone comes close.
+    const enemies = sim.players.filter((player) => player.id !== self.id && player.life === 'alive' && sim.canSee(self, player));
     let nearestEnemy: PlayerState | null = null;
     let nearestDistance = Infinity;
     for (const enemy of enemies) {
@@ -193,6 +194,7 @@ export class BotController {
         const current = sim.players[this.goal.playerId];
         if (
           current.life === 'alive' &&
+          sim.canSee(self, current) &&
           distance(self.x, self.y, current.x, current.y) < nearestDistance + 150
         ) {
           return;
@@ -325,6 +327,11 @@ export class BotController {
           this.thinkCooldown = 0;
         }
         if (!target || target.life === 'eliminated') return;
+        if (!sim.canSee(self, target)) {
+          // The target vanished behind furniture: think again.
+          this.thinkCooldown = 0;
+          return;
+        }
         const stats = sim.weaponStatsOf(self);
         const reach = stats.range + PLAYER_RADIUS - 4;
         const gap = distance(self.x, self.y, target.x, target.y);

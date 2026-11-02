@@ -49,6 +49,17 @@ export class InputController {
       return;
     }
     if (!this.enabled) return;
+    // Keyboard zoom: + / - (main row or numpad), whatever the layout.
+    if (event.code === 'NumpadAdd' || event.key === '+' || event.key === '=') {
+      event.preventDefault();
+      this.zoomSteps -= 1;
+      return;
+    }
+    if (event.code === 'NumpadSubtract' || event.key === '-') {
+      event.preventDefault();
+      this.zoomSteps += 1;
+      return;
+    }
     if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) event.preventDefault();
     if (!event.repeat) {
       if (event.code === 'KeyE' || event.code === 'KeyF') this.interactTap = true;

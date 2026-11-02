@@ -90,7 +90,7 @@ export class Hud {
 
     const keys = el('div', 'hud-keys', this.root);
     keys.innerHTML =
-      '<span><kbd>ZQSD</kbd>/<kbd>WASD</kbd> bouger</span><span><kbd>Clic</kbd> frapper</span><span><kbd>E</kbd> ramasser · réanimer</span><span><kbd>G</kbd> lâcher · poser table</span><span><kbd>Molette</kbd> zoom</span><span><kbd>Échap</kbd> pause</span>';
+      '<span><kbd>ZQSD</kbd>/<kbd>WASD</kbd> bouger</span><span><kbd>Clic</kbd> frapper</span><span><kbd>E</kbd> ramasser · réanimer</span><span><kbd>G</kbd> lâcher · poser table</span><span>Immobile près d’un meuble : caché</span><span><kbd>Molette</kbd>/<kbd>+</kbd><kbd>-</kbd> zoom</span><span><kbd>Échap</kbd> pause</span>';
 
     this.minimap = el('canvas', 'hud-minimap panel', this.root);
     this.notifications = el('div', 'hud-notifications', this.root);
@@ -266,8 +266,9 @@ export class Hud {
       ctx.fillStyle = item.placed ? '#c98b4a' : 'rgba(255,230,150,0.85)';
       ctx.fillRect(item.x * scale - 1, item.y * scale - 1, item.placed ? 3 : 2, item.placed ? 3 : 2);
     }
+    const viewer = sim.players[localPlayerId];
     for (const player of sim.players) {
-      if (player.life === 'eliminated') continue;
+      if (player.life === 'eliminated' || !sim.canSee(viewer, player)) continue;
       const character = getCharacter(player.characterId);
       ctx.beginPath();
       ctx.arc(player.x * scale, player.y * scale, player.id === localPlayerId ? 4 : 3, 0, Math.PI * 2);

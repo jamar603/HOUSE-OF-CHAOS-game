@@ -24,6 +24,13 @@ export const ITEM_RESPAWN_SECONDS = 45;
 export const MAX_ITEMS_IN_WORLD = 48;
 export const BARRICADE_HEALTH = 90;
 
+/** Seconds a player must stay still next to tall furniture before being hidden. */
+export const HIDE_DELAY_SECONDS = 0.7;
+/** Distance (world px) from a cover piece of furniture that still counts as "behind" it. */
+export const HIDE_COVER_MARGIN = 16;
+/** Opponents closer than this always see a hidden player. */
+export const HIDE_REVEAL_DISTANCE = 72;
+
 export const SIMULATION_TICK_RATE = 60;
 
 export interface PreparationPreset {
@@ -39,6 +46,8 @@ export const PREPARATION_PRESETS: readonly PreparationPreset[] = [
 ];
 
 export type HairStyle = 'short' | 'long' | 'bald' | 'bun';
+/** Top-down clothing look; purely cosmetic. */
+export type Outfit = 'overalls' | 'hoodie' | 'tank' | 'stripes';
 
 export interface CharacterDefinition {
   id: string;
@@ -48,6 +57,7 @@ export interface CharacterDefinition {
   hairColor: string;
   skinColor: string;
   hairStyle: HairStyle;
+  outfit: Outfit;
   tagline: string;
 }
 
@@ -60,6 +70,7 @@ export const CHARACTERS: readonly CharacterDefinition[] = [
     hairColor: '#3b2416',
     skinColor: '#f1c27d',
     hairStyle: 'short',
+    outfit: 'overalls',
     tagline: 'Bricoleur impulsif',
   },
   {
@@ -70,6 +81,7 @@ export const CHARACTERS: readonly CharacterDefinition[] = [
     hairColor: '#e8c547',
     skinColor: '#ffdbac',
     hairStyle: 'long',
+    outfit: 'hoodie',
     tagline: 'Stratège sournoise',
   },
   {
@@ -80,6 +92,7 @@ export const CHARACTERS: readonly CharacterDefinition[] = [
     hairColor: '#1a1a1a',
     skinColor: '#8d5524',
     hairStyle: 'bald',
+    outfit: 'tank',
     tagline: 'Gros bras, petit cerveau',
   },
   {
@@ -90,6 +103,7 @@ export const CHARACTERS: readonly CharacterDefinition[] = [
     hairColor: '#ff6f91',
     skinColor: '#e0ac69',
     hairStyle: 'bun',
+    outfit: 'stripes',
     tagline: 'Reine du chaos',
   },
 ];

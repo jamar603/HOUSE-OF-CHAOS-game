@@ -14,6 +14,9 @@ import {
   BLEED_OUT_SECONDS,
   DOWNED_CRAWL_SPEED,
   FINISHING_HIT_BLEED_PENALTY,
+  HIDE_COVER_MARGIN,
+  HIDE_DELAY_SECONDS,
+  HIDE_REVEAL_DISTANCE,
   ITEM_RESPAWN_SECONDS,
   KNOCKBACK_DECAY_PER_SECOND,
   MAX_HEALTH,
@@ -30,7 +33,7 @@ import {
   TILE_SIZE,
 } from '../constants';
 import { createHouseMap } from '../house/houseLayout';
-import type { HouseMap } from '../house/houseMap';
+import { COVER_FURNITURE, type HouseMap } from '../house/houseMap';
 import { BOTTLE_SHATTER_BONUS, FIST_STATS, ITEM_DEFINITIONS, type WeaponStats } from '../items/itemDefinitions';
 import {
   angleDifference,
@@ -97,6 +100,8 @@ function createPlayerState(slot: number, setup: PlayerSetup, x: number, y: numbe
     knockbackX: 0,
     knockbackY: 0,
     lastAttackerId: null,
+    hideTime: 0,
+    hidden: false,
     eliminatedAtSeconds: null,
     previousInteract: false,
     previousDrop: false,
@@ -143,6 +148,8 @@ export class GameSimulation {
   private readonly spawnTimers: number[];
   private readonly eliminationOrder: number[] = [];
   private readonly furnitureRects: Rect[];
+  /** Furniture rects grown by HIDE_COVER_MARGIN: standing inside one means standing behind cover. */
+  private readonly coverRects: Rect[];
   private readonly blockedRoomsBySlot: ReadonlySet<number>[];
 
   constructor(setups: PlayerSetup[], options: SimulationOptions, map: HouseMap = createHouseMap()) {
@@ -154,6 +161,14 @@ export class GameSimulation {
     this.preparationSeconds = Math.max(0, options.preparationSeconds);
     this.phaseTimeRemaining = this.preparationSeconds;
     this.furnitureRects = map.furniture.filter((f) => f.solid).map((f) => ({ x: f.x, y: f.y, w: f.w, h: f.h }));
+    this.coverRects = map.furniture
+      .filter((f) => COVER_FURNITURE.has(f.kind))
+      .map((f) => ({
+        x: f.x - HIDE_COVER_MARGIN,
+        y: f.y - HIDE_COVER_MARGIN,
+        w: f.w + HIDE_COVER_MARGIN * 2,
+        h: f.h + HIDE_COVER_MARGIN * 2,
+      }));
     this.blockedRoomsBySlot = [0, 1, 2, 3].map(
       (slot) =>
         new Set(
@@ -196,6 +211,22 @@ export class GameSimulation {
   /** Bedrooms a player may not enter right now (other players' rooms during preparation). */
   blockedRoomsFor(player: PlayerState): ReadonlySet<number> {
     return this.phase === 'preparation' ? this.blockedRoomsBySlot[player.slot] : NO_BLOCKED_ROOMS;
+  }
+
+  /** True when the player stands right next to tall furniture. */
+  isInCover(player: PlayerState): boolean {
+    return this.coverRects.some(
+      (rect) => player.x >= rect.x && player.x <= rect.x + rect.w && player.y >= rect.y && player.y <= rect.y + rect.h,
+    );
+  }
+
+  /**
+   * Whether `viewer` can see `target`. Hidden players are invisible to opponents
+   * unless they come very close. Eliminated viewers (spectators) see everything.
+   */
+  canSee(viewer: PlayerState, target: PlayerState): boolean {
+    if (viewer.id === target.id || !target.hidden || viewer.life === 'eliminated') return true;
+    return distance(viewer.x, viewer.y, target.x, target.y) <= HIDE_REVEAL_DISTANCE;
   }
 
   barricadeRect(item: ItemState): Rect {
@@ -254,6 +285,7 @@ export class GameSimulation {
     player.stunImmunityRemaining = Math.max(0, player.stunImmunityRemaining - dt);
     if (player.life === 'eliminated') {
       player.isMoving = false;
+      this.reveal(player);
       return;
     }
 
@@ -290,7 +322,10 @@ export class GameSimulation {
     if (player.isMoving) player.walkCycle += travelled / 6;
     if (player.life === 'downed' && player.isMoving) player.facing = Math.atan2(input.moveY, input.moveX);
 
-    if (player.life !== 'alive') return;
+    if (player.life !== 'alive') {
+      this.reveal(player);
+      return;
+    }
 
     this.handleInteraction(player, input.interact, interactPressed, dt);
     if (dropPressed) this.dropHeldItem(player, true);
@@ -302,6 +337,28 @@ export class GameSimulation {
     ) {
       this.performAttack(player);
     }
+    this.updateHiding(player, dt);
+  }
+
+  /** Standing still behind tall furniture hides the player; moving, attacking or getting hit reveals them. */
+  private updateHiding(player: PlayerState, dt: number): void {
+    const canHide =
+      !player.isMoving &&
+      player.swingRemaining <= 0 &&
+      player.stunRemaining <= 0 &&
+      player.revivingTargetId === null &&
+      this.isInCover(player);
+    if (!canHide) {
+      this.reveal(player);
+      return;
+    }
+    player.hideTime += dt;
+    player.hidden = player.hideTime >= HIDE_DELAY_SECONDS;
+  }
+
+  private reveal(player: PlayerState): void {
+    player.hideTime = 0;
+    player.hidden = false;
   }
 
   /** Pushes overlapping standing players apart. */
@@ -529,6 +586,7 @@ export class GameSimulation {
 
   private applyHit(attacker: PlayerState, target: PlayerState, damage: number, stats: WeaponStats, weapon: WeaponKind): void {
     target.lastAttackerId = attacker.id;
+    this.reveal(target);
     if (target.life === 'downed') {
       target.bleedOutRemaining -= FINISHING_HIT_BLEED_PENALTY;
       this.events.push({
