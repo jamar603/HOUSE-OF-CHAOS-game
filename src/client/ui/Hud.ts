@@ -156,7 +156,7 @@ export class Hud {
     this.selfName.textContent = local.name;
     this.selfName.style.color = character.accentColor;
     const ratio = local.health / MAX_HEALTH;
-    this.healthFill.style.width = `${ratio * 100}%`;
+    this.healthFill.style.transform = `scaleX(${ratio})`;
     this.healthFill.dataset.level = ratio > 0.5 ? 'high' : ratio > 0.25 ? 'mid' : 'low';
     this.healthText.textContent = `${Math.ceil(local.health)} / ${MAX_HEALTH} PV`;
     let status = '';
@@ -206,7 +206,7 @@ export class Hud {
     if (item) {
       const definition = ITEM_DEFINITIONS[item.kind];
       this.durabilityBox.classList.remove('hidden');
-      this.durabilityFill.style.width = `${(item.durability / definition.maxDurability) * 100}%`;
+      this.durabilityFill.style.transform = `scaleX(${item.durability / definition.maxDurability})`;
       this.durabilityBox.title = `Durabilité ${item.durability}/${definition.maxDurability}`;
       this.itemSpecial.textContent = definition.special;
     } else {

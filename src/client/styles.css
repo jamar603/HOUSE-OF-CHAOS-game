@@ -172,7 +172,8 @@ kbd {
 .health-fill {
   height: 100%;
   background: linear-gradient(90deg, #36c46b, #7dffb3);
-  transition: width 0.2s ease-out;
+  transform-origin: left center;
+  transition: transform 0.2s ease-out;
 }
 
 .health-fill[data-level='mid'] {
@@ -317,7 +318,8 @@ kbd {
 .durability-fill {
   height: 100%;
   background: linear-gradient(90deg, var(--accent), var(--accent-2));
-  transition: width 0.2s ease-out;
+  transform-origin: left center;
+  transition: transform 0.2s ease-out;
 }
 
 .item-special {
@@ -361,7 +363,7 @@ kbd {
   padding: 7px 12px;
   border-radius: 10px;
   background: var(--panel);
-  border-left: 4px solid var(--muted);
+  border: 1px solid var(--line);
   font-size: 13px;
   animation: slide-in 0.25s ease-out;
   transition: opacity 0.6s, transform 0.6s;
@@ -373,15 +375,17 @@ kbd {
 }
 
 .note-danger {
-  border-left-color: var(--danger);
+  background: rgba(70, 12, 24, 0.88);
+  color: #ffd0d6;
 }
 
 .note-good {
-  border-left-color: var(--good);
+  background: rgba(12, 52, 32, 0.88);
+  color: #c9f7dc;
 }
 
 .note-chaos {
-  border-left-color: var(--chaos);
+  background: rgba(72, 10, 36, 0.88);
   color: #ffd0dc;
 }
 

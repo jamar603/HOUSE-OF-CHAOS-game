@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "bounce-easing",
+        "value": "cubic-bezier(0.2, 1.6, 0.4, 1)",
+        "createdAt": "2026-11-02T20:37:52.803Z",
+        "reason": "Claude decided: overshoot pop on the in-game phase banner (LE CHAOS COMMENCE !) is intentional arcade game feel"
+      }
+    ]
+  }
+}
