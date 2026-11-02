@@ -20,7 +20,7 @@ import type { ItemState, PlayerState } from '../../shared/types';
 import { Camera } from './Camera';
 import { drawCharacter } from './characterArt';
 import { EffectsSystem } from './effects';
-import { createHouseLayer } from './houseArt';
+import { createHouseLayer, HOUSE_ART_MARGIN } from './houseArt';
 import { drawBarricade, drawFloorItem } from './itemArt';
 
 export interface RenderFrame {
@@ -99,7 +99,8 @@ export class Renderer {
     if (!ctx) throw new Error('Canvas 2D indisponible.');
     this.ctx = ctx;
     const size = mapPixelSize(sim.map);
-    this.camera = new Camera({ width: size.x, height: size.y });
+    // The camera may show part of the garden around the house.
+    this.camera = new Camera({ width: size.x, height: size.y, margin: HOUSE_ART_MARGIN * 0.7 });
     this.houseLayer = createHouseLayer(sim.map, {
       ownerColors: [0, 1, 2, 3].map((slot) => {
         const player = sim.players[slot];
@@ -153,7 +154,7 @@ export class Renderer {
     const zoom = this.zoom;
 
     ctx.setTransform(this.pixelRatio, 0, 0, this.pixelRatio, 0, 0);
-    ctx.fillStyle = '#0d0e16';
+    ctx.fillStyle = '#2f5a2a';
     ctx.fillRect(0, 0, this.viewWidth, this.viewHeight);
 
     ctx.save();
@@ -161,7 +162,7 @@ export class Renderer {
     ctx.scale(zoom, zoom);
     ctx.translate(-this.camera.x, -this.camera.y);
     ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(this.houseLayer, 0, 0);
+    ctx.drawImage(this.houseLayer, -HOUSE_ART_MARGIN, -HOUSE_ART_MARGIN);
 
     const local = sim.players[frame.localPlayerId];
     if (sim.phase === 'preparation') this.drawForbiddenBedrooms(sim, local, time);

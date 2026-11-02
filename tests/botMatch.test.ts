@@ -31,7 +31,8 @@ describe('bot match', () => {
       expect(sim.result?.winnerId).not.toBeNull();
       // Bots picked up weapons during preparation.
       const totalDamage = sim.players.reduce((sum, player) => sum + player.stats.damageDealt, 0);
-      expect(totalDamage).toBeGreaterThan(300);
+      // Three knock-outs need at least 300 damage (damage is capped at the remaining health).
+      expect(totalDamage).toBeGreaterThanOrEqual(300);
       console.log(
         `seed ${seed}: winner ${sim.players[sim.result!.winnerId!].name} after ${sim.result!.durationSeconds.toFixed(0)} s`,
       );

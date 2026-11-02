@@ -114,6 +114,9 @@ const BEDROOM_FURNITURE: FurnitureSpec[] = [
   { kind: 'deskChair', x: 1.2, y: 8.4, w: 0.9, h: 0.9, solid: false },
   { kind: 'bookshelf', x: 12.7, y: 8, w: 1.1, h: 3 },
   { kind: 'lamp', x: 12.9, y: 11.1, w: 0.8, h: 0.8 },
+  { kind: 'beanbag', x: 6.6, y: 0.6, w: 1.6, h: 1.5 },
+  { kind: 'toyChest', x: 0.2, y: 5.4, w: 1.1, h: 1.9 },
+  { kind: 'plant', x: 4.3, y: 10.9, w: 0.9, h: 0.9 },
 ];
 
 const ROOM_FURNITURE: Record<string, FurnitureSpec[]> = {
@@ -133,12 +136,16 @@ const ROOM_FURNITURE: Record<string, FurnitureSpec[]> = {
     { kind: 'counter', x: 0.1, y: 7.5, w: 1.3, h: 4 },
     { kind: 'island', x: 6, y: 5, w: 7, h: 2 },
     { kind: 'roundTable', x: 15, y: 7.5, w: 3, h: 2.2 },
+    { kind: 'diningChair', x: 14, y: 8.2, w: 0.9, h: 0.9, solid: false },
+    { kind: 'diningChair', x: 18.1, y: 8.2, w: 0.9, h: 0.9, solid: false },
     { kind: 'plant', x: 18.8, y: 0.2, w: 1, h: 1 },
   ],
   'corridor-north': [
     { kind: 'console', x: 24, y: 0.1, w: 2.5, h: 0.8 },
     { kind: 'plant', x: 60.8, y: 0.15, w: 1, h: 1 },
     { kind: 'console', x: 44, y: 0.1, w: 2.5, h: 0.8 },
+    { kind: 'bench', x: 9.5, y: 2.1, w: 3, h: 0.8 },
+    { kind: 'plant', x: 34, y: 2.05, w: 0.9, h: 0.9 },
   ],
   hideout: [
     { kind: 'mattress', x: 1, y: 5.5, w: 4, h: 2.6, solid: false },
@@ -170,17 +177,22 @@ const ROOM_FURNITURE: Record<string, FurnitureSpec[]> = {
     { kind: 'shelf', x: 12.7, y: 3, w: 1.2, h: 4 },
     { kind: 'dryingRack', x: 2, y: 7.5, w: 3.5, h: 1 },
     { kind: 'basket', x: 0.3, y: 0.3, w: 1.2, h: 1.2 },
+    { kind: 'basket', x: 7.6, y: 0.4, w: 1.1, h: 1.1 },
+    { kind: 'ironingBoard', x: 4.5, y: 4.6, w: 3.4, h: 0.9 },
   ],
   'corridor-south': [
     { kind: 'plant', x: 0.2, y: 0.2, w: 1, h: 1 },
     { kind: 'console', x: 40, y: 2.1, w: 2.5, h: 0.8 },
     { kind: 'console', x: 18, y: 2.1, w: 2.5, h: 0.8 },
+    { kind: 'bench', x: 27, y: 0.1, w: 3, h: 0.8 },
+    { kind: 'plant', x: 61, y: 2, w: 0.9, h: 0.9 },
   ],
   hall: [
     { kind: 'stairs', x: 4.5, y: 9.6, w: 3, h: 2.4, solid: false },
     { kind: 'coatRack', x: 0.3, y: 0.3, w: 1, h: 1 },
     { kind: 'console', x: 7.5, y: 0.2, w: 3, h: 1 },
     { kind: 'cabinet', x: 0.2, y: 9, w: 1.2, h: 2.5 },
+    { kind: 'bench', x: 0.2, y: 2.5, w: 0.9, h: 3 },
     { kind: 'plant', x: 9.8, y: 10.8, w: 1, h: 1 },
   ],
   'dining-room': [
@@ -208,6 +220,10 @@ const ROOM_FURNITURE: Record<string, FurnitureSpec[]> = {
     { kind: 'crate', x: 14, y: 1, w: 1.6, h: 1.6 },
     { kind: 'workbench', x: 10, y: 9.4, w: 5, h: 1.4 },
     { kind: 'sofa', x: 20, y: 0.5, w: 5, h: 1.6, variant: 3 },
+    { kind: 'barrel', x: 3.8, y: 0.3, w: 1.2, h: 1.2 },
+    { kind: 'barrel', x: 24, y: 8.9, w: 1.2, h: 1.2 },
+    { kind: 'barrel', x: 25.3, y: 9.5, w: 1.1, h: 1.1, variant: 1 },
+    { kind: 'barrel', x: 1.8, y: 9.3, w: 1.2, h: 1.2, variant: 1 },
   ],
 };
 

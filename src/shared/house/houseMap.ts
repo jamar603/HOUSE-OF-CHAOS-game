@@ -92,7 +92,12 @@ export type FurnitureKind =
   | 'shelf'
   | 'workbench'
   | 'stairs'
-  | 'lamp';
+  | 'lamp'
+  | 'beanbag'
+  | 'toyChest'
+  | 'ironingBoard'
+  | 'bench'
+  | 'barrel';
 
 /** Tall furniture a player can hide behind. */
 export const COVER_FURNITURE: ReadonlySet<FurnitureKind> = new Set<FurnitureKind>([
@@ -111,6 +116,8 @@ export const COVER_FURNITURE: ReadonlySet<FurnitureKind> = new Set<FurnitureKind
   'crate',
   'washer',
   'bed',
+  'barrel',
+  'beanbag',
 ]);
 
 /** A static piece of furniture. Rect is in world pixels. */

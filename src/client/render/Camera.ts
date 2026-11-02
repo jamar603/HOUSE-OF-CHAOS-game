@@ -17,12 +17,14 @@ const COMBAT_FRAME_FILL = 0.7;
 const COMBAT_MIN_ZOOM_SHARE = 0.72;
 /** How far (0..1) the camera center moves from the target toward the fight's center. */
 const COMBAT_CENTER_PULL = 0.35;
-/** Empty margin (world px) allowed outside the map, so outer walls are fully visible. */
-const EDGE_MARGIN = 24;
+/** Default margin (world px) the camera may show outside the map, so outer walls are fully visible. */
+const DEFAULT_EDGE_MARGIN = 24;
 
 export interface CameraBounds {
   width: number;
   height: number;
+  /** How far (world px) the view may extend past the map edges. */
+  margin?: number;
 }
 
 export interface Point {
@@ -104,14 +106,15 @@ export class Camera {
   private clampToBounds(zoom: number, viewWidth: number, viewHeight: number): void {
     const halfW = viewWidth / 2 / zoom;
     const halfH = viewHeight / 2 / zoom;
-    this.x = clampAxis(this.x, halfW, this.bounds.width);
-    this.y = clampAxis(this.y, halfH, this.bounds.height);
+    const margin = this.bounds.margin ?? DEFAULT_EDGE_MARGIN;
+    this.x = clampAxis(this.x, halfW, this.bounds.width, margin);
+    this.y = clampAxis(this.y, halfH, this.bounds.height, margin);
   }
 }
 
-function clampAxis(value: number, halfView: number, size: number): number {
-  const min = halfView - EDGE_MARGIN;
-  const max = size - halfView + EDGE_MARGIN;
+function clampAxis(value: number, halfView: number, size: number, margin: number): number {
+  const min = halfView - margin;
+  const max = size - halfView + margin;
   if (min >= max) return size / 2;
   return clamp(value, min, max);
 }
